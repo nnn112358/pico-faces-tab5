@@ -45,6 +45,10 @@ for attempt in range(20):   # 書き込み直後は再列挙で数秒消える�
         time.sleep(0.5)
 ser.dtr = False
 
+def emit(b):
+    sys.stdout.write(b.decode("utf-8", "replace"))
+    sys.stdout.flush()   # 受け取ったそばから出す（ファイルへ流したときに途中で覗けるように）
+
 def collect(seconds, stop_prefix=None):
     t_end = time.time() + seconds
     buf = b""
@@ -57,19 +61,19 @@ def collect(seconds, stop_prefix=None):
             continue
         if chunk:
             buf += chunk
+            emit(chunk)
             if stop_prefix and stop_prefix in buf:
                 # 応答の後に続くプロファイル表を少しだけ待つ
                 time.sleep(0.3)
-                buf += ser.read(65536)
+                emit(ser.read(65536))
                 break
-    return buf.decode("utf-8", "replace")
 
 if a.reset:
     ser.dtr = False; ser.rts = True; time.sleep(0.1); ser.rts = False; time.sleep(0.1)
 if a.boot > 0:
-    print("=== boot"); print(collect(a.boot, b"OK seed=" if not a.cmds else None), end="")
+    print("=== boot", flush=True); collect(a.boot, b"OK seed=" if not a.cmds else None)
 for c in a.cmds:
     ser.reset_input_buffer()
     ser.write((c + "\n").encode()); ser.flush()
-    print(f"=== {c}"); print(collect(a.wait, b"OK seed="), end="")
+    print(f"=== {c}", flush=True); collect(a.wait, b"OK seed=")
 ser.close()
