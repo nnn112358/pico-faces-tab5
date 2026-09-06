@@ -32,19 +32,25 @@ git submodule update --init         # 上流を取る（約 300 MB。モデル�
 
 ### 操作
 
-起動すると 1 枚生成して表示します（seed 3、8 ステップ、male / smile、CFG w=6）。
+起動すると seed 3 で 1 枚生成して表示します（8 ステップ、male / smile、CFG w=6）。
+右パネルのボタンで seed と条件を選んで生成します。
 
-| 操作 | 動作 |
+| ボタン | 動作 |
 |---|---|
-| 画像をタップ | seed を +1 して生成 |
-| 右パネルの上半分をタップ | クラスを切り替え（female/no-smile → female/smile → male/no-smile → male/smile → null） |
-| 右パネルの下半分をタップ | CFG を切り替え（none → 4 → 6 → 8 → none） |
+| `-10` `-1` `+1` `+10` | 次に生成する seed を増減（中央に表示） |
+| `class : ...` | クラスを切り替え（female/no-smile → female/smile → male/no-smile → male/smile → null） |
+| `cfg : ...` | CFG を切り替え（none → w=4 → 6 → 8 → none） |
+| **1枚生成** | 表示中の seed で 1 枚生成し、seed を 1 進める（左の画像をタップしても同じ） |
+| **10枚連続** | seed から 10 枚を順に生成し、seed を 10 進める。途中で画面を触ると中断 |
+
+seed と条件が同じなら毎回同じ顔になります（生成は決定的です）。別の顔にしたいときは seed を変えてください。
 
 USB シリアル（115200）からは上流の Pico 版と同じ書式で指示できます。
 
 ```
-G <seed> [k_steps] [class] [w]     生成。class / w を省略すると上流の golden の規約
-I                                  モデル情報
+G <seed> [k_steps] [class] [w] [count]   生成。class / w を省略すると上流の golden の規約。
+                                         count（既定 1）枚を seed から順に生成
+I                                        モデル情報
 ```
 
 応答は `OK seed=1 k=4 class=1 w=4 crc32=40c5e5a0 ms=2023` のような 1 行です。
@@ -59,7 +65,7 @@ uv run --no-project --with pyserial python tools/serial_cmd.py --boot 14 --wait 
 
 ## 推論速度
 
-Tab5（ESP32-P4 400 MHz × 2 コア）での 1 枚の生成時間です。PIE 版も参照実装と bit 一致します。
+Tab5（ESP32-P4 360 MHz × 2 コア）での 1 枚の生成時間です。PIE 版も参照実装と bit 一致します。
 
 | 設定 | 参照 C（移植直後） | PIE 版（現在） |
 |---|---:|---:|

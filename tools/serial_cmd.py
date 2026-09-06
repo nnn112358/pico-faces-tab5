@@ -4,8 +4,9 @@
         [--boot 25] [--wait 12] "G 1 4" "G 2 4" ...
 
 ⚠️ `cat /dev/ttyACM0` や `printf > /dev/ttyACM0` のようにポートを開閉すると、Linux の
-cdc-acm ドライバが DTR/RTS を動かし、ESP32-P4 の USB-Serial-JTAG がダウンロードモードに
-落ちることがある（実際に落ちた）。pyserial で開く前に dtr/rts を下げておけば起きない。
+cdc-acm ドライバが DTR/RTS を動かし、ESP32-P4 の USB-Serial-JTAG がリセットされたり
+ダウンロードモードに落ちたりする（実際に起きた）。ここでは DTR/RTS の順序を制御して、
+開いてもリセットしないようにしている（下の注記）。
 
 --boot N : 最初に N 秒だけ起動ログを集める（0 で省略）
 --wait N : 各コマンドの応答を最大 N 秒待つ（`OK seed=` の行が出たら早く切り上げる）
@@ -28,7 +29,11 @@ ser = serial.Serial()
 ser.port = a.port
 ser.baudrate = 115200
 ser.timeout = 0.2
-ser.dtr = False
+# ⚠️ Linux はポートを開くと DTR/RTS を両方立てる。pyserial は open() の中で DTR → RTS の順に
+# 指定値へ戻すので、dtr=False, rts=False にしておくと「DTR=0, RTS=1」の瞬間ができ、
+# ESP32-P4 の USB-Serial-JTAG はそれをリセット（EN=L）と解釈して再起動する（実際に毎回起きた）。
+# DTR は立てたまま RTS だけ下げ（DTR=1, RTS=0 はリセットにならない）、そのあと DTR を下げる。
+ser.dtr = True
 ser.rts = False
 for attempt in range(20):   # 書き込み直後は再列挙で数秒消えることがある
     try:
@@ -38,6 +43,7 @@ for attempt in range(20):   # 書き込み直後は再列挙で数秒消える�
         if attempt == 19:
             sys.exit(f"serial_cmd.py: cannot open {a.port}: {e}")
         time.sleep(0.5)
+ser.dtr = False
 
 def collect(seconds, stop_prefix=None):
     t_end = time.time() + seconds

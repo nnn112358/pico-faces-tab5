@@ -6,16 +6,24 @@
  *
  * 構成:
  *   - モデル blob は app（.rodata）に埋め込み、起動時に PSRAM へコピーして読む
- *     （エンジンの重みステージングは既定の memcpy: PSRAM → 内部 SRAM の arena）
  *   - 2 コア並列は pf_par.c（rf_par_for の置き換え）。生成タスクはコア 0 固定
- *   - 操作: 画面タップ。USB シリアルからは上流と同じ `G <seed> [k] [class] [w]` も受ける
+ *   - 操作は右パネルのボタン（seed の増減 / class / cfg / 1 枚生成 / 10 枚連続）。
+ *     USB シリアルからは上流と同じ `G <seed> [k] [class] [w]` も受ける
+ *
+ * タッチ判定:
+ *   M5Unified の wasClicked() は「押した位置から 8 px も動かず 500 ms 以内に離した」ときしか真に
+ *   ならず、指で普通にタップすると外れる（実機で 40 秒タップして 0 回だった）。
+ *   wasReleased()（離した瞬間）と base_x/base_y（押し始めの座標）で判定する。
+ *   生成中はタッチを読まないので、生成中のタップは終わった直後に「離した」として見える。
+ *   1 枚生成の後は 1 回ぶん読み捨て、10 枚連続の途中では「中断」として扱う。
  *
  * USB シリアル（115200 / USB Serial-JTAG）:
- *   G <seed> [k_steps] [class] [w]   生成。class/w を省略すると上流の golden 規約
- *                                    （class = seed % n_cond, w = seed % (n_w+1) - 1）
- *   I                                モデル情報
- *   応答: OK seed=.. k=.. class=.. w=.. crc32=........ ms=..
- *   → ホストの rf_golden と同じ crc32 が出れば bit 一致（README 参照）
+ *   G <seed> [k_steps] [class] [w] [count]   生成。class/w を省略すると上流の golden 規約
+ *                                            （class = seed % n_cond, w = seed % (n_w+1) - 1）。
+ *                                            count（既定 1）枚を seed から順に生成
+ *   I                                        モデル情報
+ *   応答: OK seed=.. k=.. class=.. w=.. crc32=........ ms=..（1 枚ごと）
+ *   → ホストの rf_golden と同じ crc32 が出れば bit 一致（docs/details.md 参照）
  */
 #include <inttypes.h>
 #include <stdio.h>
@@ -27,7 +35,6 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -75,6 +82,7 @@ typedef struct {
     int k_steps;
     int cond;
     int w_idx;
+    int count;       /* seed から順に何枚生成するか */
     bool from_serial;
 } pf_req_t;
 
@@ -83,11 +91,21 @@ static uint8_t *s_img;               /* PSRAM: 128×128×3 */
 static lgfx::rgb888_t *s_scaled;     /* PSRAM: 640×640×3 */
 static QueueHandle_t s_q;
 static SemaphoreHandle_t s_gfx;      /* M5GFX はスレッド非対応。描画はこのロック下で */
-static pf_req_t s_cur;               /* 最後に表示した / 進行中のリクエスト */
-static int64_t s_t0_us;
+
+/* パネルの設定値（次に生成するもの） */
+static uint64_t s_seed = 3;
+static int s_cond = 3;
+static int s_w_idx = -1;
+static int s_k = 8;
+
+/* 最後に生成した / 生成中のもの */
+static pf_req_t s_cur;
 static uint32_t s_last_ms;
-/* 起動直後にタッチパネルが click を報告し、勝手に 1 枚生成した（実機で 2 回連続）。
- * 起動から 3 秒間はタッチを無視する */
+static uint32_t s_last_crc;
+static int s_batch_i, s_batch_n;     /* 連続生成の進捗（1 始まり / 全体） */
+static bool s_busy;
+
+/* 起動直後にタッチパネルが離しイベントを報告することがある。起動から 3 秒間は無視する */
 static int64_t s_touch_ok_us;
 
 static int w_value(int w_idx) {
@@ -95,52 +113,123 @@ static int w_value(int w_idx) {
     return (int)(s_model->w_q8[w_idx] / 256);
 }
 
+/* ---- ボタン ------------------------------------------------------------- */
+enum {
+    B_SEED_M10, B_SEED_M1, B_SEED_P1, B_SEED_P10,
+    B_CLASS, B_CFG,
+    B_GEN1, B_GEN10,
+    B_N,
+    B_IMAGE = 100,   /* 画像をタップ = 1 枚生成 */
+    B_OTHER = 101    /* ボタン以外 */
+};
+
+typedef struct {
+    int x, y, w, h;
+} pf_rect_t;
+
+/* seed の行: [-10][-1]  seed  [+1][+10] */
+#define ROW_SEED_Y 150
+#define ROW_CLASS_Y 240
+#define ROW_CFG_Y 310
+#define ROW_GEN_Y 400
+#define ROW_PROG_Y 520
+#define ROW_STATUS_Y 580
+static const pf_rect_t k_btn[B_N] = {
+    {PF_PANEL_X, ROW_SEED_Y, 92, 60},            /* -10 */
+    {PF_PANEL_X + 100, ROW_SEED_Y, 92, 60},      /* -1 */
+    {PF_PANEL_X + 328, ROW_SEED_Y, 92, 60},      /* +1 */
+    {PF_PANEL_X + 428, ROW_SEED_Y, 92, 60},      /* +10 */
+    {PF_PANEL_X, ROW_CLASS_Y, PF_PANEL_W, 56},   /* class */
+    {PF_PANEL_X, ROW_CFG_Y, PF_PANEL_W, 56},     /* cfg */
+    {PF_PANEL_X, ROW_GEN_Y, 252, 96},            /* 1 枚生成 */
+    {PF_PANEL_X + 268, ROW_GEN_Y, 252, 96},      /* 10 枚連続 */
+};
+
+static bool in_rect(const pf_rect_t &r, int x, int y) {
+    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+static void draw_button(const pf_rect_t &r, const char *label, uint16_t fill, uint16_t fg) {
+    auto &d = M5.Display;
+    d.fillRoundRect(r.x, r.y, r.w, r.h, 10, fill);
+    d.drawRoundRect(r.x, r.y, r.w, r.h, 10, TFT_DARKGREY);
+    d.setTextDatum(middle_center);
+    d.setTextColor(fg, fill);
+    d.drawString(label, r.x + r.w / 2, r.y + r.h / 2);
+}
+
 /* ---- 描画 --------------------------------------------------------------- */
-static void draw_panel(const char *status, uint16_t color) {
+static void draw_status(const char *status, uint16_t color) {
     auto &d = M5.Display;
     d.startWrite();
-    d.fillRect(PF_PANEL_X, 0, PF_PANEL_W, d.height(), TFT_BLACK);
+    d.fillRect(PF_PANEL_X, ROW_STATUS_Y, PF_PANEL_W, 40, TFT_BLACK);
+    d.setFont(&fonts::lgfxJapanGothic_24);
+    d.setTextDatum(top_left);
+    d.setTextColor(color, TFT_BLACK);
+    d.drawString(status, PF_PANEL_X, ROW_STATUS_Y);
+    d.endWrite();
+}
+
+static void draw_panel(void) {
+    auto &d = M5.Display;
+    char buf[96];
+    d.startWrite();
+    d.fillRect(PF_PANEL_X, 0, PF_PANEL_W, ROW_STATUS_Y, TFT_BLACK);
     d.setTextDatum(top_left);
     d.setFont(&fonts::FreeSansBold18pt7b);
     d.setTextColor(TFT_WHITE, TFT_BLACK);
-    d.drawString("pico-faces / Tab5", PF_PANEL_X, 40);
+    d.drawString("pico-faces / Tab5", PF_PANEL_X, 30);
     d.setFont(&fonts::FreeSans12pt7b);
     d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    d.drawString("DiT + VAE, int8, ESP32-P4 x2", PF_PANEL_X, 84);
-    char buf[96];
-    int y = 150;
-    d.setFont(&fonts::FreeSans18pt7b);
+    d.drawString("DiT + VAE, int8, ESP32-P4 PIE x2", PF_PANEL_X, 74);
+
+    /* seed の行 */
+    d.setFont(&fonts::lgfxJapanGothic_20);
+    d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    d.drawString("seed（次に生成する番号）", PF_PANEL_X, ROW_SEED_Y - 28);
+    d.setFont(&fonts::lgfxJapanGothic_24);
+    draw_button(k_btn[B_SEED_M10], "-10", TFT_DARKGREY, TFT_WHITE);
+    draw_button(k_btn[B_SEED_M1], "-1", TFT_DARKGREY, TFT_WHITE);
+    draw_button(k_btn[B_SEED_P1], "+1", TFT_DARKGREY, TFT_WHITE);
+    draw_button(k_btn[B_SEED_P10], "+10", TFT_DARKGREY, TFT_WHITE);
+    d.setFont(&fonts::lgfxJapanGothic_28);
+    d.setTextDatum(middle_center);
     d.setTextColor(TFT_WHITE, TFT_BLACK);
-    snprintf(buf, sizeof buf, "seed  %llu", (unsigned long long)s_cur.seed);
-    d.drawString(buf, PF_PANEL_X, y); y += 44;
-    snprintf(buf, sizeof buf, "class %d  %s", s_cur.cond,
-             s_cur.cond < 5 ? k_class_names[s_cur.cond] : "");
-    d.drawString(buf, PF_PANEL_X, y); y += 44;
-    if (s_cur.w_idx < 0) snprintf(buf, sizeof buf, "steps %d   cfg none", s_cur.k_steps);
-    else snprintf(buf, sizeof buf, "steps %d   cfg w=%d", s_cur.k_steps, w_value(s_cur.w_idx));
-    d.drawString(buf, PF_PANEL_X, y); y += 44;
+    snprintf(buf, sizeof buf, "%llu", (unsigned long long)s_seed);
+    d.drawString(buf, PF_PANEL_X + 260, ROW_SEED_Y + 30);
+
+    /* class / cfg */
+    d.setFont(&fonts::lgfxJapanGothic_24);
+    snprintf(buf, sizeof buf, "class %d : %s", s_cond, s_cond < 5 ? k_class_names[s_cond] : "");
+    draw_button(k_btn[B_CLASS], buf, TFT_DARKGREY, TFT_WHITE);
+    if (s_w_idx < 0) snprintf(buf, sizeof buf, "cfg : none   (steps %d)", s_k);
+    else snprintf(buf, sizeof buf, "cfg : w=%d   (steps %d)", w_value(s_w_idx), s_k);
+    draw_button(k_btn[B_CFG], buf, TFT_DARKGREY, TFT_WHITE);
+
+    /* 生成ボタン */
+    d.setFont(&fonts::lgfxJapanGothic_28);
+    draw_button(k_btn[B_GEN1], "1枚生成", 0x0320 /* 濃い緑 */, TFT_WHITE);
+    draw_button(k_btn[B_GEN10], "10枚連続", 0x0014 /* 濃い青 */, TFT_WHITE);
+
+    /* 最後の結果 */
+    d.setFont(&fonts::lgfxJapanGothic_20);
+    d.setTextDatum(top_left);
+    d.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     if (s_last_ms) {
-        snprintf(buf, sizeof buf, "time  %.2f s", s_last_ms / 1000.0);
-        d.drawString(buf, PF_PANEL_X, y);
+        snprintf(buf, sizeof buf, "表示中: seed %llu  class %d  %s  %.2f s", (unsigned long long)s_cur.seed,
+                 s_cur.cond, s_cur.w_idx < 0 ? "cfg none" : "cfg on", s_last_ms / 1000.0);
+        d.drawString(buf, PF_PANEL_X, ROW_STATUS_Y + 44);
+        snprintf(buf, sizeof buf, "crc32 %08" PRIx32 "   シリアル: G <seed> [k] [class] [w]", s_last_crc);
+        d.drawString(buf, PF_PANEL_X, ROW_STATUS_Y + 70);
+    } else {
+        d.fillRect(PF_PANEL_X, ROW_STATUS_Y + 44, PF_PANEL_W, 60, TFT_BLACK);
     }
-    y += 70;
-    d.setFont(&fonts::FreeSansBold12pt7b);
-    d.setTextColor(color, TFT_BLACK);
-    d.drawString(status, PF_PANEL_X, y);
-    /* 操作ヒント */
-    d.setFont(&fonts::FreeSans9pt7b);
-    d.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    int hy = d.height() - 120;
-    d.drawString("tap image : next seed", PF_PANEL_X, hy);
-    d.drawString("tap here (upper) : next class", PF_PANEL_X, hy + 26);
-    d.drawString("tap here (lower) : cfg none / 4 / 6 / 8", PF_PANEL_X, hy + 52);
-    d.drawString("serial: G <seed> [k] [class] [w]", PF_PANEL_X, hy + 78);
     d.endWrite();
 }
 
 static void draw_progress(void) {
     auto &d = M5.Display;
-    const int x = PF_PANEL_X, y = 380, w = PF_PANEL_W - 40, h = 18;
+    const int x = PF_PANEL_X, y = ROW_PROG_Y, w = PF_PANEL_W, h = 18;
     int total = rf_progress_total ? rf_progress_total : 1;
     int done = rf_progress > total ? total : rf_progress;
     d.startWrite();
@@ -185,6 +274,84 @@ extern "C" void rf_step_hook(void) {
     }
 }
 
+/* ---- タッチ ------------------------------------------------------------- */
+/* M5.update() を 1 回呼び、離しイベントがあれば押し始めの座標で当たり判定する。
+ * 戻り値: ボタン番号 / B_IMAGE / B_OTHER、何も無ければ -1 */
+static int poll_touch(void) {
+    M5.update();
+    if (esp_timer_get_time() < s_touch_ok_us) return -1;
+    int n = M5.Touch.getCount();
+    for (int i = 0; i < n; i++) {
+        auto t = M5.Touch.getDetail(i);
+        if (!t.wasReleased()) continue;
+        int x = t.base_x, y = t.base_y;
+        ESP_LOGI(TAG, "touch release: began %d,%d ended %d,%d", x, y, (int)t.x, (int)t.y);
+        if (x >= PF_IMG_X && x < PF_IMG_X + PF_IMG_PX && y >= PF_IMG_Y && y < PF_IMG_Y + PF_IMG_PX) return B_IMAGE;
+        for (int b = 0; b < B_N; b++)
+            if (in_rect(k_btn[b], x, y)) return b;
+        return B_OTHER;
+    }
+    return -1;
+}
+
+/* 生成中に溜まったタッチを読み捨てる（生成が終わった直後に 1 回） */
+static void drain_touch(void) {
+    for (int i = 0; i < 3; i++) {
+        M5.update();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+/* ---- 生成 --------------------------------------------------------------- */
+static void generate_one(const pf_req_t &r) {
+    s_cur = r;
+    s_busy = true;
+    char buf[80];
+    xSemaphoreTake(s_gfx, portMAX_DELAY);
+    if (s_batch_n > 1) snprintf(buf, sizeof buf, "生成中 %d / %d  seed %llu（画面を触ると中断）", s_batch_i, s_batch_n,
+                                (unsigned long long)r.seed);
+    else snprintf(buf, sizeof buf, "生成中  seed %llu", (unsigned long long)r.seed);
+    draw_status(buf, TFT_YELLOW);
+    rf_progress = 0;
+    draw_progress();
+    xSemaphoreGive(s_gfx);
+
+    pf_par_reset();
+    int64_t t0 = esp_timer_get_time();
+    rf_generate(s_model, r.seed, r.k_steps, r.cond, r.w_idx, s_img, NULL);
+    s_last_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    s_last_crc = rf_crc32(s_img, (size_t)RF_IMG_HW * RF_IMG_HW * RF_IMG_CH);
+
+    xSemaphoreTake(s_gfx, portMAX_DELAY);
+    draw_image();
+    draw_panel();
+    draw_progress();
+    xSemaphoreGive(s_gfx);
+
+    printf("OK seed=%llu k=%d class=%d w=%d crc32=%08" PRIx32 " ms=%" PRIu32 "\n", (unsigned long long)r.seed,
+           r.k_steps, r.cond, w_value(r.w_idx), s_last_crc, s_last_ms);
+    ESP_LOGI(TAG, "seed %llu class %d k %d w %d: crc32 %08" PRIx32 " in %" PRIu32 " ms", (unsigned long long)r.seed,
+             r.cond, r.k_steps, w_value(r.w_idx), s_last_crc, s_last_ms);
+#ifdef RF_PIE_P4
+    ESP_LOGI(TAG, "  DiT %lld ms, VAE decode %lld ms (%s)", (long long)(s_last_ms - pf_vae_us / 1000),
+             (long long)(pf_vae_us / 1000), pf_vae_pie ? "PIE" : "reference");
+#endif
+    pf_par_report();
+    s_busy = false;
+}
+
+/* パネルの設定から要求を作り、キューに積む。seed は count ぶん進める */
+static void enqueue_from_panel(int count) {
+    pf_req_t r;
+    r.seed = s_seed;
+    r.k_steps = s_k;
+    r.cond = s_cond;
+    r.w_idx = s_w_idx;
+    r.count = count;
+    r.from_serial = false;
+    if (xQueueSend(s_q, &r, 0) == pdTRUE) s_seed += (uint64_t)count;
+}
+
 /* ---- 生成タスク（コア 0 固定） ---------------------------------------- */
 static void gen_task(void *arg) {
     (void)arg;
@@ -192,63 +359,56 @@ static void gen_task(void *arg) {
     for (;;) {
         if (xQueueReceive(s_q, &req, pdMS_TO_TICKS(20)) != pdTRUE) {
             /* 待機中: タッチを見る */
-            M5.update();
-            auto n = M5.Touch.getCount();
-            if (esp_timer_get_time() < s_touch_ok_us) continue; /* 起動直後の誤検知を捨てる */
-            bool fire = false;
-            pf_req_t nx = s_cur;
-            nx.from_serial = false;
-            for (size_t i = 0; i < n && !fire; ++i) {
-                auto t = M5.Touch.getDetail(i);
-                if (!t.wasClicked()) continue;
-                /* 起動後しばらく、触っていないのに click が来ることがある（実機で再現）。座標を残す */
-                ESP_LOGI(TAG, "touch click at %d,%d", (int)t.x, (int)t.y);
-                if (t.x >= PF_IMG_X && t.x < PF_IMG_X + PF_IMG_PX && t.y >= PF_IMG_Y && t.y < PF_IMG_Y + PF_IMG_PX) {
-                    nx.seed = s_cur.seed + 1;
-                    fire = true;
-                } else if (t.x >= PF_PANEL_X) {
-                    if (t.y < M5.Display.height() / 2) {
-                        nx.cond = (s_cur.cond + 1) % (int)s_model->n_cond;
-                    } else {
-                        /* none → w[0] → w[1] → … → none */
-                        nx.w_idx = s_cur.w_idx + 1;
-                        if (nx.w_idx >= (int)s_model->n_w) nx.w_idx = -1;
-                    }
-                    fire = true;
+            int b = poll_touch();
+            if (b < 0 || b == B_OTHER) continue;
+            switch (b) {
+            case B_SEED_M10: s_seed = s_seed >= 10 ? s_seed - 10 : 0; break;
+            case B_SEED_M1: s_seed = s_seed >= 1 ? s_seed - 1 : 0; break;
+            case B_SEED_P1: s_seed += 1; break;
+            case B_SEED_P10: s_seed += 10; break;
+            case B_CLASS: s_cond = (s_cond + 1) % (int)s_model->n_cond; break;
+            case B_CFG:
+                s_w_idx += 1;
+                if (s_w_idx >= (int)s_model->n_w) s_w_idx = -1;
+                break;
+            case B_GEN1:
+            case B_IMAGE: enqueue_from_panel(1); break;
+            case B_GEN10: enqueue_from_panel(10); break;
+            default: break;
+            }
+            xSemaphoreTake(s_gfx, portMAX_DELAY);
+            draw_panel();
+            xSemaphoreGive(s_gfx);
+            continue;
+        }
+        /* 1 枚、または seed から count 枚を順に */
+        int n = req.count > 0 ? req.count : 1;
+        s_batch_n = n;
+        bool cancelled = false;
+        for (int i = 0; i < n; i++) {
+            s_batch_i = i + 1;
+            pf_req_t r = req;
+            r.seed = req.seed + (uint64_t)i;
+            generate_one(r);
+            if (i + 1 < n) {
+                /* 生成中に画面を触っていたら中断 */
+                int b = poll_touch();
+                if (b >= 0) {
+                    cancelled = true;
+                    break;
                 }
             }
-            if (!fire) continue;
-            req = nx;
         }
-        s_cur = req;
-        s_last_ms = 0;
+        drain_touch();
+        char buf[80];
+        if (cancelled) snprintf(buf, sizeof buf, "中断しました（%d / %d 枚）", s_batch_i, n);
+        else if (n > 1) snprintf(buf, sizeof buf, "完了  %d 枚（seed %llu 〜 %llu）", n, (unsigned long long)req.seed,
+                                 (unsigned long long)(req.seed + n - 1));
+        else snprintf(buf, sizeof buf, "完了  seed %llu  %.2f s", (unsigned long long)req.seed, s_last_ms / 1000.0);
+        s_batch_n = 0;
         xSemaphoreTake(s_gfx, portMAX_DELAY);
-        draw_panel("generating ...", TFT_YELLOW);
-        rf_progress = 0;
-        draw_progress();
+        draw_status(buf, TFT_GREENYELLOW);
         xSemaphoreGive(s_gfx);
-
-        pf_par_reset();
-        s_t0_us = esp_timer_get_time();
-        rf_generate(s_model, req.seed, req.k_steps, req.cond, req.w_idx, s_img, NULL);
-        s_last_ms = (uint32_t)((esp_timer_get_time() - s_t0_us) / 1000);
-        uint32_t crc = rf_crc32(s_img, (size_t)RF_IMG_HW * RF_IMG_HW * RF_IMG_CH);
-
-        xSemaphoreTake(s_gfx, portMAX_DELAY);
-        draw_image();
-        draw_panel("done", TFT_GREENYELLOW);
-        draw_progress();
-        xSemaphoreGive(s_gfx);
-
-        printf("OK seed=%llu k=%d class=%d w=%d crc32=%08" PRIx32 " ms=%" PRIu32 "\n",
-               (unsigned long long)req.seed, req.k_steps, req.cond, w_value(req.w_idx), crc, s_last_ms);
-        ESP_LOGI(TAG, "seed %llu class %d k %d w %d: crc32 %08" PRIx32 " in %" PRIu32 " ms",
-                 (unsigned long long)req.seed, req.cond, req.k_steps, w_value(req.w_idx), crc, s_last_ms);
-#ifdef RF_PIE_P4
-        ESP_LOGI(TAG, "  DiT %lld ms, VAE decode %lld ms (%s)", (long long)(s_last_ms - pf_vae_us / 1000),
-                 (long long)(pf_vae_us / 1000), pf_vae_pie ? "PIE" : "reference");
-#endif
-        pf_par_report();
     }
 }
 
@@ -276,7 +436,7 @@ static void console_task(void *arg) {
         line[n] = 0;
         n = 0;
         if (line[0] == 'G') {
-            char *e1, *e2, *e3, *e4;
+            char *e1, *e2, *e3, *e4, *e5;
             pf_req_t r;
             r.from_serial = true;
             r.seed = strtoull(line + 1, &e1, 0);
@@ -292,6 +452,8 @@ static void console_task(void *arg) {
             } else if (e3 == e2 && s_model->n_w) {
                 r.w_idx = (int)(r.seed % (s_model->n_w + 1)) - 1;
             }
+            long cnt = strtol(e4, &e5, 0);
+            r.count = (e5 != e4 && cnt > 0) ? (int)cnt : 1;
             if (xQueueSend(s_q, &r, 0) != pdTRUE) printf("BUSY\n");
         } else if (line[0] == 'I') {
             printf("pico-faces-tab5 K=%u dim=%u depth=%u cond=%u ch=%u n_w=%u blob=%u sys=%dMHz\n",
@@ -299,7 +461,7 @@ static void console_task(void *arg) {
                    (unsigned)s_model->n_cond, (unsigned)s_model->img_ch, (unsigned)s_model->n_w,
                    (unsigned)(model_bin_end - model_bin_start), CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
         } else if (line[0]) {
-            printf("? (G <seed> [k] [class] [w] | I)\n");
+            printf("? (G <seed> [k] [class] [w] [count] | I)\n");
         }
     }
 }
@@ -356,17 +518,19 @@ extern "C" void app_main(void) {
 #endif
     pf_par_init();
 
-    /* 最初の 1 枚: README の例（seed 3, K=8, class 4 → こちらでは class 3, w=6）に近い設定 */
-    pf_req_t first;
-    first.seed = 3;
-    first.k_steps = (int)s_model->K;   /* 8 */
-    first.cond = 3;
-    first.w_idx = -1;
+    /* パネルの初期値: seed 3、K ステップ、class 3（male / smile）、w=6。最初の 1 枚をすぐ生成する */
+    s_k = (int)s_model->K; /* 8 */
+    s_cond = 3;
+    s_w_idx = -1;
     for (uint32_t j = 0; j < s_model->n_w; j++)
-        if (s_model->w_q8[j] == 6 * 256) first.w_idx = (int)j;
-    first.from_serial = false;
-    s_cur = first;
-    xQueueSend(s_q, &first, 0);
+        if (s_model->w_q8[j] == 6 * 256) s_w_idx = (int)j;
+    s_seed = 3;
+    s_cur.seed = s_seed;
+    s_cur.k_steps = s_k;
+    s_cur.cond = s_cond;
+    s_cur.w_idx = s_w_idx;
+    draw_panel();
+    enqueue_from_panel(1);
 
     xTaskCreatePinnedToCore(gen_task, "pf_gen", 20480, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(console_task, "pf_con", 6144, NULL, 4, NULL, 1);

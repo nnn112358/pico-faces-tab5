@@ -17,6 +17,13 @@ partitions.csv              app 7 MB（blob 4 MB を .rodata に含む）
 idf.sh                      ESP-IDF v5.5 をクリーンな環境で有効にして idf.py を呼ぶ
 ```
 
+### シリアルコマンド
+
+```
+G <seed> [k_steps] [class] [w] [count]   生成。count（既定 1）枚を seed から順に生成し、1 枚ごとに OK 行を返す
+I                                        モデル情報（CPU クロックも表示）
+```
+
 ### ビルドオプション
 
 | オプション | 意味 |
@@ -35,6 +42,11 @@ idf.sh                      ESP-IDF v5.5 をクリーンな環境で有効にし
   `components/pf_engine/linker.lf` でそれらの `.bss` を PSRAM に置いています。
   IDF 付属の `extram_bss` スキームは esp_wifi の fragment にあり、Wi-Fi を含まないビルドでは黙って無視されます。
   自前のスキーム（`bss -> extern_ram`）が必要でした。
+- **タッチ**。M5Unified の `wasClicked()` は「押した位置から 8 px も動かず 500 ms 以内に離した」
+  ときしか真にならず、指で普通にタップすると外れます（実機で 40 秒タップして 0 回でした）。
+  `wasReleased()`（離した瞬間）と `base_x/base_y`（押し始めの座標）でボタンの当たり判定をしています。
+  生成中はタッチを読まないので、生成中のタップは終わった直後に「離した」として見えます。
+  1 枚生成の後は読み捨て、10 枚連続の途中では中断として扱います。
 - **プロファイル**。生成のたびに `rf_par_for` の呼び出しを関数ごとに集計して表示します。
 
 ```
@@ -51,8 +63,10 @@ I (...) pico_faces:   DiT 1513 ms, VAE decode 498 ms (PIE)
 ### シリアルの注意
 
 `cat /dev/ttyACM0` や `printf > /dev/ttyACM0` のようにポートを開閉すると、Linux の cdc-acm ドライバが
-DTR/RTS を動かし、ESP32-P4 の USB Serial/JTAG がダウンロードモードに落ちることがあります（実際に落ちました）。
-`tools/serial_cmd.py` は pyserial で開く前に DTR/RTS を下げるので安全です。
+DTR/RTS を動かし、ESP32-P4 の USB Serial/JTAG がリセットされたりダウンロードモードに落ちたりします（実際に起きました）。
+Linux はポートを開くときに DTR/RTS を両方立て、pyserial は開いた直後に DTR → RTS の順で指定値へ戻すので、
+両方を下げる設定でも「DTR=0, RTS=1」の瞬間ができてリセットがかかります。`tools/serial_cmd.py` は
+DTR を立てたまま RTS だけ下げてから DTR を下げる順序にしてあり、開いてもリセットしません。
 
 ```bash
 uv run --no-project --with pyserial python tools/serial_cmd.py --boot 14 --wait 10 "G 1 4" "G 2 4" "G 3 4"
@@ -111,11 +125,13 @@ cmp out/eng_1.rgb upstream/checkpoints/m3_decD_deep_full/goldens/golden_1.rgb
 
 ## 測定で分かったこと
 
-### ESP32-P4 の PIE（400 MHz）
+### ESP32-P4 の PIE（360 MHz）
+
+CPU クロックは 360 MHz です（P4 v1.0 の上限。`sdkconfig` の 400 MHz は効かず、`I` コマンドが `sys=360MHz` と返します）。
 
 | 項目 | 実測 |
 |---|---|
-| PIE 命令 1 個（MAC でもロードでも） | 約 3.3 ns ≈ 1.3 サイクル。ロードと MAC は重ならない |
+| PIE 命令 1 個（MAC でもロードでも） | 約 3.3 ns ≈ 1.2 サイクル。ロードと MAC は重ならない |
 | MAC + ロードの融合命令 | 約 6.1 ns（2 命令ぶん。命令数は減るが時間は減らない） |
 | 16 MAC あたりの下限 | 約 6.2 ns（重みロード 1 + MAC 1） |
 | `esp.movx.r.xacc.l` | 下位 **24 bit** しか返さない。`.h` と結合して 32 bit を組み立てる |
