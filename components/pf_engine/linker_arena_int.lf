@@ -1,0 +1,12 @@
+# 実験用: dit の活性だけ PSRAM に置き、rf_arena（kernels_ref）は内部 RAM に残す。
+# sdkconfig.arena_int（L2 キャッシュ 128 KB）と組で使う。
+[scheme:pf_extram_bss]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:pf_engine]
+archive: libpf_engine.a
+entries:
+    dit (pf_extram_bss)
+    pf_pie_kernels (pf_extram_bss)

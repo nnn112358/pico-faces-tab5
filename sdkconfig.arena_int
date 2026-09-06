@@ -1,0 +1,6 @@
+# 実験: L2 キャッシュを 128 KB に減らして内部 RAM を 640 KB にし、arena（256 KB）を内部に戻す。
+#   ./idf.sh -B build_int -DSDKCONFIG=$PWD/build_int/sdkconfig \
+#            -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.arena_int" -DPF_ARENA_INTERNAL=1 build
+CONFIG_CACHE_L2_CACHE_128KB=y
+CONFIG_CACHE_L2_CACHE_256KB=n
+CONFIG_CACHE_L2_CACHE_SIZE=0x20000

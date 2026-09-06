@@ -1,0 +1,20 @@
+# エンジンの大きな .bss を PSRAM（extern_ram = .ext_ram.bss）へ置く。
+#   kernels_ref: rf_arena 2 × 128 KB（重みのステージング先 / VAE のピンポン）
+#   dit:         z_tok / res / xa / qkv / attn / vT など約 88 KB の活性
+# 内部 RAM（L2MEM 768 KB − L2 キャッシュ 256 KB）には収まらなかった（リンク時に 267 KB 不足）。
+# どちらも L2 キャッシュ（256 KB）に載る大きさなので、ホット経路は概ねキャッシュから読める。
+# 実機で速度を測って、arena だけ内部に戻す（L2 キャッシュ 128 KB にする）案と比べること。
+#
+# ⚠️ IDF 付属の `extram_bss` スキームは esp_wifi/linker.lf にあり、Wi-Fi を含まないこの
+#    ビルドでは定義されない（黙って無視された）。ここで同じ中身を自前で定義する。
+[scheme:pf_extram_bss]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:pf_engine]
+archive: libpf_engine.a
+entries:
+    kernels_ref (pf_extram_bss)
+    dit (pf_extram_bss)
+    pf_pie_kernels (pf_extram_bss)

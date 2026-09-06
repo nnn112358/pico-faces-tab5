@@ -1,0 +1,9 @@
+# pico-faces / M5Stack Tab5（ESP32-P4、16 MB flash）
+#
+# P4 は 2nd stage bootloader が 0x2000 から 0x6120 B あるので、表のオフセットは 0x10000
+# （CONFIG_PARTITION_TABLE_OFFSET）。app はモデル blob（最大 4.02 MB）を .rodata に含むので 7 MB。
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x11000,  0x6000,
+phy_init, data, phy,     0x17000,  0x1000,
+factory,  app,  factory, 0x20000,  0x700000,
