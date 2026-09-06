@@ -202,55 +202,26 @@ M5GFX の 1280×720 フレームバッファ 1.8 MB です。
 
 ![P4 と S3 の推論速度の差の原因（段ごとの実測と 4 つの原因）](media/p4_vs_s3.svg)
 
-### チップの比較（ESP32-S3 vs ESP32-P4。CoreS3 と Tab5 の構成で）
+### 4 チップの比較（ESP32-S3 / S31 / P4 / P4X）
 
-| 項目 | ESP32-S3（M5Stack CoreS3） | ESP32-P4（M5Stack Tab5） |
-|---|---|---|
-| CPU | Xtensa LX7 × 2 | RISC-V（RV32IMAFC + 独自拡張）× 2 + 低消費電力コア × 1 |
-| クロック | 240 MHz | 400 MHz（rev v1.0 の Tab5 は 360 MHz で動作） |
-| SIMD 拡張 | PIE（`ee.*`、TIE728） | PIE（`esp.*`、`xesppie`） |
-| ベクトルレジスタ | 128 bit × 8（q0〜q7） | 128 bit × 8（q0〜q7） |
-| 内積の累算器 | ACCX 40 bit | XACC 40 bit（`.l` は下位 24 bit しか返さない） |
-| レーン別の累算器（int8） | QACC 16 レーン × **20 bit**（±2^19 で飽和） | QACC 16 レーン × **32 bit** |
-| ハードウェアループ | `loopnez` / `loopgtz`（1 段） | `esp.lp.setup`（2 段まで） |
-| 内部 SRAM | 512 KB（アプリのヒープは約 340 KB） | 768 KB L2MEM（L2 キャッシュ 256 KB を切り出して約 478 KB がヒープ） |
-| キャッシュ | データ 64 KB を 2 コアで共有、行 64 B。L2 なし | 各コアに L1（命令 / データ）+ 共有 L2 256 KB（最大 512 KB）、行 128 B |
-| PSRAM のバス | Quad SPI（データ線 4 本）、80 MHz SDR | HEX（データ線 16 本）、200 MHz DDR |
-| PSRAM の生の帯域 | 40 MB/s | 800 MB/s |
-| PSRAM の容量 | 8 MB | 32 MB |
-| flash | 16 MB、QIO 80 MHz。**PSRAM と同じ SPI バスを共有** | 16 MB、QIO 80 MHz。PSRAM とはコントローラが別 |
-| FPU | 単精度 | 単精度（各コア） |
-| 実測: PIE 命令 1 個 | 4.3 ns（≈ 1 サイクル） | 3.3 ns（≈ 1.2 サイクル） |
-| 実測: 内積 16 MAC（K=128、L1 ヒット） | 18.8 ns | 17 ns |
-| 実測: 重みの転送（memcpy 18 MB） | 24 MB/s（バスが上限） | 122 MB/s（CPU の memcpy が上限） |
-| 実測: 1 枚の生成（K=4 w=4、PIE あり） | 6.9 s | 2.02 s |
-| 2 コアの PIE で踏んだ点 | ロード直後の使用で古い値を読むハザード（ロードを 2 チャンク先行させて回避） | 特になし（融合命令と 4 組ローテーションが使える） |
+実測があるのは S3（CoreS3）と P4（Tab5 rev v1.0）だけで、S31 と P4X は Espressif の公開資料の仕様値です。
 
-### PSRAM の比較（ESP32-S3 / ESP32-S31 / ESP32-P4 / ESP32-P4X）
-
-ESP32-S31（2026 年 3 月発表）と ESP32-P4X（ESP32-P4 のチップリビジョン v3.x）を Espressif の公開資料から加えた表です。
-実測があるのは CoreS3（S3）と Tab5（P4 rev v1.0）だけで、S31 と P4X の行は仕様値です。
-
-| 項目 | ESP32-S3（CoreS3） | ESP32-S31 | ESP32-P4（Tab5、rev v1.x） | ESP32-P4X（rev v3.x） |
+| 項目 | ESP32-S3（CoreS3） | ESP32-S31 | ESP32-P4（Tab5） | ESP32-P4X（P4 rev v3.x） |
 |---|---|---|---|---|
-| PSRAM のバス | Quad SPI（4 本、CoreS3）。Octal も可 | 8 bit（Octal）DDR、**パッケージ内蔵のみ** | 16 bit（HEX）DDR。Octal も可 | 同左 |
-| 最大クロック | Quad 80 MHz SDR（Octal は 80 MHz DDR、120 MHz 設定あり） | 250 MHz DDR | 仕様 250 MHz DDR（Tab5 の設定は 200 MHz） | 仕様 250 MHz DDR |
-| 生の帯域 | Quad: **40 MB/s**（Octal 80 MHz DDR: 160 MB/s） | 8 bit × 2 × 250 M = **500 MB/s** | 16 bit × 2 × 250 M = **1,000 MB/s**（200 MHz 設定で 800 MB/s） | **1,000 MB/s** |
-| 容量 | 8 MB（CoreS3） | 16 / 32 MB 内蔵 | 16 / 32 MB 内蔵（外付けは最大 64 MB） | 同左 |
-| flash とのバス | **共有**（同じ SPI バス） | 分離（同時アクセス可） | 分離（flash は最大 120 MHz） | 分離 |
-| CPU | Xtensa LX7 × 2、240 MHz | RISC-V × 2、320 MHz | RISC-V × 2、360 MHz（v1.x の上限） | RISC-V × 2、**400 MHz** |
-| 内部 SRAM | 512 KB | 512 KB（+ LP 32 KB） | 768 KB L2MEM（+ LP 32 KB） | 768 KB L2MEM |
-| キャッシュ | データ 64 KB を 2 コアで共有、行 64 B。L2 なし | 命令 32 KB × コア、**データ 64 KB を 2 コアで共有**（2-way、行 64 B）。L2 なし | 各コアに命令 16 KB + データ 64 KB、共有 L2 128 / 256 / 512 KB（行 64 / 128 B） | 同左（キャッシュ領域の割り当て位置が変更） |
-| SIMD | PIE `ee.*`（QACC 16 レーン × 20 bit） | XespV（128 bit、**片コアのみ**。レジスタや累算器の幅は未公開） | PIE `esp.*`（QACC 16 レーン × 32 bit） | 同左 |
-
-読み方:
-
-- S3 → S31 で PSRAM の生の帯域は 12.5 倍（40 → 500 MB/s）になり、flash とバスを分けたので「重みの転送が 5 倍遅い」問題は大きく縮む見込みです。
-  一方でデータキャッシュは S3 と同じ「64 KB を 2 コアで共有」なので、活性 88 KB や VAE の作業領域 256 KB がキャッシュから溢れる構造は残ります。
-  SIMD が片コアだけなのも、このプロジェクトの 2 コア並列（内積を両コアで回す）には不利です。
-- P4 → P4X は PSRAM の仕様は同じで、CPU が 360 → 400 MHz になります。Tab5 が P4X なら DiT の部分がその比率で縮む計算です。
-- 生の帯域は「バス幅 × DDR × 周波数」だけの値で、コマンドやアドレスの固定コストとキャッシュミスの回数で実効は下がります。
-  CoreS3 の memcpy 実測 24 MB/s は生の 40 MB/s に対して 6 割、Tab5 の 122 MB/s は生の 800 MB/s に対して 15%（CPU の memcpy が上限）でした。
+| CPU | Xtensa LX7 × 2 | RISC-V × 2 | RISC-V × 2 | RISC-V × 2 |
+| クロック | 240 MHz | 320 MHz | 360 MHz（rev v1.x の上限） | **400 MHz** |
+| SIMD | PIE `ee.*`（両コア） | XespV 128 bit（**片コアのみ**、詳細未公開） | PIE `esp.*`（両コア） | 同左 |
+| レーン別累算器（int8） | 16 × 20 bit（飽和） | 未公開 | 16 × 32 bit | 同左 |
+| 内部 SRAM | 512 KB | 512 KB | 768 KB | 768 KB |
+| データキャッシュ | 64 KB を 2 コアで共有、L2 なし | 64 KB を 2 コアで共有、L2 なし | 各コア 64 KB + 共有 L2 最大 512 KB | 同左 |
+| PSRAM のバス | Quad 4 bit SDR（Octal も可） | Octal 8 bit DDR（内蔵のみ） | HEX 16 bit DDR（Octal も可） | 同左 |
+| PSRAM の最大クロック | 80 MHz | 250 MHz | 250 MHz（Tab5 は 200 MHz 設定） | 250 MHz |
+| PSRAM の生の帯域 | **40 MB/s** | **500 MB/s** | **1,000 MB/s**（800 MB/s @200 MHz） | **1,000 MB/s** |
+| PSRAM 容量 | 8 MB | 16 / 32 MB 内蔵 | 16 / 32 MB 内蔵 | 同左 |
+| flash とのバス | 共有 | 分離 | 分離 | 分離 |
+| 実測: 重みの転送 memcpy | 24 MB/s | — | 122 MB/s | — |
+| 実測: 1 枚の生成（K=4 w=4、PIE） | 6.9 s | — | 2.02 s | — |
+| 同、PIE なし | 27.9 s | — | 10.1 s | — |
 
 出典: Espressif の ESP32-S31 データシート・製品ページ、ESP32-P4 シリーズデータシート、ESP32-P4 チップリビジョン v3.x ユーザーガイド（2026-09-07 参照）。
 
