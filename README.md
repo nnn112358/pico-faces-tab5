@@ -66,6 +66,9 @@ uv run --no-project --with pyserial python tools/serial_cmd.py --boot 14 --wait 
 
 ## 推論速度
 
+
+<img width="674" height="398" alt="image" src="https://github.com/user-attachments/assets/66852d31-2d7f-4fd7-aff9-49bf768a64a3" />
+
 Tab5（ESP32-P4 360 MHz × 2 コア）で 1 枚を生成する時間です。2 つのモデルそれぞれを、PIE なし（参照 C、
 `-DPF_PIE=0`）と PIE 版で測りました。どの組み合わせでも生成される画像は同じです（CRC32 が一致）。
 
