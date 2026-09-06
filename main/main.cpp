@@ -22,6 +22,7 @@
  *                                            （class = seed % n_cond, w = seed % (n_w+1) - 1）。
  *                                            count（既定 1）枚を seed から順に生成
  *   I                                        モデル情報
+ *   M                                        メモリの使用状況（内部 SRAM / PSRAM）
  *   応答: OK seed=.. k=.. class=.. w=.. crc32=........ ms=..（1 枚ごと）
  *   → ホストの rf_golden と同じ crc32 が出れば bit 一致（docs/details.md 参照）
  */
@@ -480,13 +481,25 @@ static void console_task(void *arg) {
             long cnt = strtol(e4, &e5, 0);
             r.count = (e5 != e4 && cnt > 0) ? (int)cnt : 1;
             if (xQueueSend(s_q, &r, 0) != pdTRUE) printf("BUSY\n");
+        } else if (line[0] == 'M') {
+            /* メモリの使用状況（合計 / 空き / これまでの最小空き / 最大ブロック） */
+            const struct { const char *name; uint32_t caps; } kinds[] = {
+                {"internal", MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT}, {"psram", MALLOC_CAP_SPIRAM}};
+            for (auto &k : kinds) {
+                printf("MEM %-8s total=%u free=%u min_free=%u largest=%u\n", k.name,
+                       (unsigned)heap_caps_get_total_size(k.caps), (unsigned)heap_caps_get_free_size(k.caps),
+                       (unsigned)heap_caps_get_minimum_free_size(k.caps),
+                       (unsigned)heap_caps_get_largest_free_block(k.caps));
+            }
+            printf("MEM console task stack: %u B never used of 6144\n",
+                   (unsigned)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
         } else if (line[0] == 'I') {
             printf("pico-faces-tab5 K=%u dim=%u depth=%u cond=%u ch=%u n_w=%u blob=%u sys=%dMHz\n",
                    (unsigned)s_model->K, (unsigned)s_model->dim, (unsigned)s_model->depth,
                    (unsigned)s_model->n_cond, (unsigned)s_model->img_ch, (unsigned)s_model->n_w,
                    (unsigned)(model_bin_end - model_bin_start), CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
         } else if (line[0]) {
-            printf("? (G <seed> [k] [class] [w] [count] | I)\n");
+            printf("? (G <seed> [k] [class] [w] [count] | I | M)\n");
         }
     }
 }

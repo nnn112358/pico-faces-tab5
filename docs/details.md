@@ -22,6 +22,7 @@ idf.sh                      ESP-IDF v5.5 をクリーンな環境で有効にし
 ```
 G <seed> [k_steps] [class] [w] [count]   生成。count（既定 1）枚を seed から順に生成し、1 枚ごとに OK 行を返す
 I                                        モデル情報（CPU クロックも表示）
+M                                        メモリの使用量（内部 SRAM / PSRAM の合計・空き・最小空き）
 ```
 
 ### ビルドオプション
@@ -165,6 +166,24 @@ uv run --no-project --with pyserial python tools/serial_cmd.py --boot 30 --wait 
 
 `G 4 4` は seed 4 → class 4（無条件）・w=0 で cfg none、`G 3 8 4 6` は class 4 なので w=6 を指定しても guidance は
 効かず cfg none 相当、`G 3 8 3 6` が cfg w=6 です。
+
+### メモリの使用量（既定モデル、PIE 版）
+
+シリアルの `M` コマンドで実行時のヒープを、`./idf.sh size` で静的なサイズを測りました（2026-09-06）。
+
+| 領域 | 値 |
+|---|---:|
+| flash（app イメージ） | 5.28 MB（`.rodata` 4.94 MB = モデル blob 4.02 MB + 日本語フォントなど、`.text` 343 KB） |
+| 内部 SRAM の静的領域（DIRAM） | 118 KB（`.text` 87 KB、`.bss` 20 KB、`.data` 12 KB） |
+| 内部 SRAM のヒープ | 合計 478 KB、起動後の空き 169 KB、**生成中の最小空き 149 KB**（最大ブロック 100 KB） |
+| PSRAM のヒープ | 合計 31.4 MB、空き 21.3 MB（使用 10.6 MB） |
+| PSRAM の静的領域（`.bss`） | 646 KB（arena 256 KB、DiT の活性 88 KB、PIE 自己テストのバッファ約 290 KB） |
+
+内部 SRAM の主な使い道は、DiT の重みステージング兼 VAE の重みバッファ 200 KB、タスクのスタック
+（生成 20 KB、ワーカー 16 KB、コンソール 6 KB）です。L2 キャッシュに 256 KB を割いているので、
+L2MEM 768 KB のうちヒープに使えるのは 478 KB です。
+PSRAM の主な使い道は、モデル blob 4.0 MB、密な重みの転置コピー 1.5 MB、表示用の 640×640 RGB888 1.2 MB、
+M5GFX の 1280×720 フレームバッファ 1.8 MB です。
 
 ### 高速化の経過（K=4 w=4）
 
