@@ -1,7 +1,12 @@
 # pico-faces on M5Stack Tab5
 
 [cpldcpu/pico-faces](https://github.com/cpldcpu/pico-faces) を **M5Stack Tab5（ESP32-P4）** で動かすファームウェアです。
-https://x.com/nnn112358/status/2096576075551908014/video/1
+
+[![Tab5 で顔を生成している様子（クリックで X の投稿の動画へ）](docs/media/demo.gif)](https://x.com/nnn112358/status/2096576075551908014/video/1)
+
+動画: [X の投稿](https://x.com/nnn112358/status/2096576075551908014/video/1)（39 秒）／
+[docs/media/demo.mp4](docs/media/demo.mp4)（同じ動画。上の GIF は冒頭 12 秒です）
+
 ## 元のリポジトリについて
 
 pico-faces は、Raspberry Pi Pico 2（RP2350）のようなマイコンで顔画像を生成する小さな拡散モデルです。
