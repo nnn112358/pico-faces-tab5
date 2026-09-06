@@ -1,129 +1,67 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" font-family="IPAexGothic, 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', 'BIZ UDPGothic', sans-serif">
-  <title>P4（Tab5）と S3（CoreS3）の推論速度の差の原因</title>
-  <rect width="1600" height="1000" fill="#fcfcfb"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 820" width="1400" height="820" font-family="IPAexGothic, 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', 'BIZ UDPGothic', sans-serif">
+  <title>P4（Tab5）と S3（CoreS3）の推論速度の差</title>
+  <rect width="1400" height="820" fill="#fcfcfb"/>
 
-  <!-- 見出し -->
-  <text x="40" y="58" font-size="30" font-weight="700" fill="#0b0b0b">P4（M5Stack Tab5）と S3（M5Stack CoreS3）の推論速度の差の原因</text>
-  <text x="40" y="90" font-size="16" fill="#52514e">pico-faces 既定モデル m3_decD_deep_full、K=4 cfg w=4、PIE あり、2 コア。実測。合計 2.02 s（Tab5）と 6.9 s（CoreS3）= 3.4 倍</text>
+  <text x="60" y="70" font-size="32" font-weight="700" fill="#0b0b0b">なぜ CoreS3（ESP32-S3）は Tab5（ESP32-P4）より 3.4 倍遅いのか</text>
+  <text x="60" y="104" font-size="16" fill="#52514e">pico-faces 既定モデル、K=4 cfg w=4、PIE あり、2 コア。1 枚の生成時間の実測</text>
 
-  <!-- 左: 段ごとの実測 -->
-  <text x="40" y="136" font-size="18" font-weight="700" fill="#0b0b0b">段ごとの生成時間 [秒]</text>
+  <!-- 大きな数字 -->
+  <g>
+    <rect x="60" y="140" width="16" height="64" fill="#2a78d6"/>
+    <text x="92" y="168" font-size="20" fill="#52514e">Tab5（ESP32-P4 360 MHz）</text>
+    <text x="92" y="204" font-size="34" font-weight="700" fill="#0b0b0b">2.0 秒</text>
+    <rect x="520" y="140" width="16" height="64" fill="#eb6834"/>
+    <text x="552" y="168" font-size="20" fill="#52514e">CoreS3（ESP32-S3 240 MHz）</text>
+    <text x="552" y="204" font-size="34" font-weight="700" fill="#0b0b0b">6.9 秒</text>
+    <text x="1000" y="168" font-size="20" fill="#52514e">差</text>
+    <text x="1000" y="204" font-size="34" font-weight="700" fill="#0b0b0b">3.4 倍</text>
+  </g>
+
+  <!-- 内訳（積み上げ棒。1 s = 160 px、原点 x=200） -->
+  <text x="60" y="262" font-size="18" font-weight="700" fill="#0b0b0b">時間の内訳 [秒]</text>
   <g font-size="12" fill="#52514e">
-    <rect x="250" y="125" width="16" height="12" fill="#2a78d6"/><text x="272" y="136">Tab5（ESP32-P4 360 MHz）</text>
-    <rect x="460" y="125" width="16" height="12" fill="#eb6834"/><text x="482" y="136">CoreS3（ESP32-S3 240 MHz）</text>
+    <rect x="220" y="250" width="14" height="14" fill="#2a78d6"/><text x="240" y="262">DiT（行列積・attention）</text>
+    <rect x="430" y="250" width="14" height="14" fill="#2a78d6" fill-opacity="0.55"/><text x="450" y="262">重みの転送</text>
+    <rect x="560" y="250" width="14" height="14" fill="#2a78d6" fill-opacity="0.3"/><text x="580" y="262">VAE デコーダ</text>
+    <rect x="700" y="250" width="14" height="14" fill="#d9d9d5"/><text x="720" y="262">その他</text>
   </g>
-  <!-- 目盛（1 s = 72 px、原点 x=250） -->
-  <g stroke="#e6e6e3" stroke-width="1">
-    <line x1="250" y1="150" x2="250" y2="880"/>
-    <line x1="394" y1="150" x2="394" y2="880"/>
-    <line x1="538" y1="150" x2="538" y2="880"/>
-    <line x1="682" y1="150" x2="682" y2="880"/>
-  </g>
-  <g font-size="11" fill="#52514e" text-anchor="middle">
-    <text x="250" y="896">0</text><text x="394" y="896">2</text><text x="538" y="896">4</text><text x="682" y="896">6 s</text>
+  <!-- Tab5: DiT 1.34, stage 0.15, VAE 0.50, other 0.03 -->
+  <text x="184" y="303" font-size="15" fill="#0b0b0b" text-anchor="end">Tab5</text>
+  <rect x="200" y="284" width="214" height="28" fill="#2a78d6"/>
+  <rect x="416" y="284" width="22" height="28" fill="#2a78d6" fill-opacity="0.55"/>
+  <rect x="440" y="284" width="78" height="28" fill="#2a78d6" fill-opacity="0.3"/>
+  <rect x="520" y="284" width="4" height="28" fill="#d9d9d5"/>
+  <text x="532" y="303" font-size="14" fill="#0b0b0b">2.02 s（DiT 1.34 / 転送 0.15 / VAE 0.50）</text>
+  <!-- CoreS3: DiT 2.94, stage 0.75, VAE 2.33, other 0.9 -->
+  <text x="184" y="349" font-size="15" fill="#0b0b0b" text-anchor="end">CoreS3</text>
+  <rect x="200" y="330" width="470" height="28" fill="#eb6834"/>
+  <rect x="672" y="330" width="118" height="28" fill="#eb6834" fill-opacity="0.55"/>
+  <rect x="792" y="330" width="371" height="28" fill="#eb6834" fill-opacity="0.3"/>
+  <rect x="1165" y="330" width="142" height="28" fill="#d9d9d5"/>
+  <text x="1315" y="349" font-size="14" fill="#0b0b0b">6.9 s</text>
+  <text x="200" y="380" font-size="13" fill="#52514e">DiT 2.9（2.2 倍）／ 転送 0.75（5 倍）／ VAE 2.3（4.7 倍）／ その他 0.9</text>
+
+  <!-- 原因 3 つ -->
+  <text x="60" y="440" font-size="18" font-weight="700" fill="#0b0b0b">原因は 3 つ</text>
+  <g font-size="16" fill="#0b0b0b">
+    <rect x="60" y="460" width="1280" height="96" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
+    <text x="84" y="496" font-size="30" font-weight="700" fill="#0b0b0b">2×</text>
+    <text x="160" y="490" font-weight="700" font-size="18">クロックと PIE の速さ</text>
+    <text x="160" y="518" fill="#52514e">360 MHz vs 240 MHz で 1.5 倍、PIE 命令 1 個が 3.3 ns vs 4.3 ns で 1.3 倍。DiT の差（2.2 倍）はほぼこれで説明できる。</text>
+    <text x="160" y="542" fill="#52514e" font-size="13">どちらの PIE も「1 命令 ≈ 1 サイクル、ロードと MAC は重ならない」なので、差は素の速さの差。</text>
+
+    <rect x="60" y="572" width="1280" height="96" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
+    <text x="84" y="608" font-size="30" font-weight="700" fill="#0b0b0b">5×</text>
+    <text x="160" y="602" font-weight="700" font-size="18">メモリが遅くて小さい</text>
+    <text x="160" y="630" fill="#52514e">PSRAM は HEX 200 MHz vs Quad 80 MHz（帯域 約 10 倍）、キャッシュ 256 KB vs 64 KB、内部 SRAM 768 KB vs 340 KB。</text>
+    <text x="160" y="654" fill="#52514e" font-size="13">重みの転送が 5 倍。活性と VAE の作業領域を PSRAM に置くしかなく、VAE と attention にも下駄が乗る。</text>
+
+    <rect x="60" y="684" width="1280" height="96" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
+    <text x="84" y="720" font-size="30" font-weight="700" fill="#0b0b0b">2×</text>
+    <text x="160" y="714" font-weight="700" font-size="18">S3 の QACC は 20 bit なので、疎な計算を密に置き換えた（計算量 2 倍）</text>
+    <text x="160" y="742" fill="#52514e">P4 は 32 bit の QACC で疎な fc2 / VAE を非ゼロだけ拾える。S3 は ±2^19 で飽和するため、転置重みの密な内積に。</text>
+    <text x="160" y="766" fill="#52514e" font-size="13">VAE 217M → 434M MAC、fc2 33k → 65k MAC/token。さらに 2 コア時のハザード回避で内積が 2 → 3 命令/16 MAC（+13%）。</text>
   </g>
 
-  <!-- 行: label, tab5, cores3, ratio -->
-  <g font-size="14" fill="#0b0b0b">
-    <!-- norm_qkv -->
-    <text x="232" y="181" text-anchor="end">norm_qkv</text>
-    <text x="232" y="199" text-anchor="end" font-size="11" fill="#52514e">rmsnorm + qkv 行列積</text>
-    <rect x="250" y="163" width="30" height="20" fill="#2a78d6"/><text x="286" y="178" font-size="12">0.41</text>
-    <rect x="250" y="187" width="72" height="20" fill="#eb6834"/><text x="328" y="202" font-size="12">1.00</text>
-    <text x="820" y="191" font-weight="700" font-size="15">2.4×</text>
-    <!-- attention -->
-    <text x="232" y="284" text-anchor="end">attention</text>
-    <rect x="250" y="266" width="19" height="20" fill="#2a78d6"/><text x="275" y="281" font-size="12">0.26</text>
-    <rect x="250" y="290" width="42" height="20" fill="#eb6834"/><text x="298" y="305" font-size="12">0.59</text>
-    <text x="820" y="294" font-weight="700" font-size="15">2.3×</text>
-    <!-- proj -->
-    <text x="232" y="387" text-anchor="end">proj</text>
-    <rect x="250" y="369" width="5" height="20" fill="#2a78d6"/><text x="261" y="384" font-size="12">0.07</text>
-    <rect x="250" y="393" width="14" height="20" fill="#eb6834"/><text x="270" y="408" font-size="12">0.20</text>
-    <text x="820" y="397" font-weight="700" font-size="15">2.9×</text>
-    <!-- mlp -->
-    <text x="232" y="490" text-anchor="end">mlp</text>
-    <text x="232" y="508" text-anchor="end" font-size="11" fill="#52514e">fc1 + fc2</text>
-    <rect x="250" y="472" width="43" height="20" fill="#2a78d6"/><text x="299" y="487" font-size="12">0.60</text>
-    <rect x="250" y="496" width="83" height="20" fill="#eb6834"/><text x="339" y="511" font-size="12">1.15</text>
-    <text x="820" y="500" font-weight="700" font-size="15">1.9×</text>
-    <!-- stage -->
-    <text x="232" y="593" text-anchor="end">重みステージング</text>
-    <text x="232" y="611" text-anchor="end" font-size="11" fill="#52514e">memcpy 18 MB</text>
-    <rect x="250" y="575" width="11" height="20" fill="#2a78d6"/><text x="267" y="590" font-size="12">0.15</text>
-    <rect x="250" y="599" width="54" height="20" fill="#eb6834"/><text x="310" y="614" font-size="12">0.75</text>
-    <text x="820" y="603" font-weight="700" font-size="15">5.0×</text>
-    <!-- VAE -->
-    <text x="232" y="696" text-anchor="end">VAE デコーダ</text>
-    <text x="232" y="714" text-anchor="end" font-size="11" fill="#52514e">P4 は疎 217M MAC、S3 は密 434M MAC</text>
-    <rect x="250" y="678" width="36" height="20" fill="#2a78d6"/><text x="292" y="693" font-size="12">0.50</text>
-    <rect x="250" y="702" width="168" height="20" fill="#eb6834"/><text x="424" y="717" font-size="12">2.33</text>
-    <text x="820" y="706" font-weight="700" font-size="15">4.7×</text>
-    <!-- 合計 -->
-    <line x1="40" y1="760" x2="860" y2="760" stroke="#e6e6e3"/>
-    <text x="232" y="811" text-anchor="end" font-weight="700">合計</text>
-    <rect x="250" y="793" width="145" height="20" fill="#2a78d6"/><text x="401" y="808" font-size="12" font-weight="700">2.02 s</text>
-    <rect x="250" y="817" width="497" height="20" fill="#eb6834"/><text x="753" y="832" font-size="12" font-weight="700">6.9 s</text>
-    <text x="820" y="821" font-weight="700" font-size="15">3.4×</text>
-  </g>
-
-  <!-- 右: 4 つの原因 -->
-  <text x="900" y="136" font-size="18" font-weight="700" fill="#0b0b0b">差の内訳（4 つの原因）</text>
-  <g font-size="14" fill="#0b0b0b">
-    <!-- 1 -->
-    <rect x="900" y="150" width="660" height="150" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
-    <circle cx="924" cy="176" r="12" fill="#0b0b0b"/><text x="924" y="181" font-size="13" font-weight="700" fill="#fcfcfb" text-anchor="middle">1</text>
-    <text x="946" y="181" font-weight="700" font-size="16">クロック × PIE の発行速度 ≈ 2 倍（DiT の差の大半）</text>
-    <text x="946" y="208" fill="#52514e">クロック 360 MHz vs 240 MHz → 1.5 倍。PIE 命令 1 個は 3.3 ns vs 4.3 ns → 1.3 倍。</text>
-    <text x="946" y="230" fill="#52514e">どちらも「1 命令 ≈ 1 サイクル、ロードと MAC は重ならない」で、合わせて約 2 倍。</text>
-    <text x="946" y="252" fill="#52514e">norm_qkv・attention・proj・mlp の 1.9〜2.9 倍をほぼ説明する。</text>
-    <text x="946" y="280" font-size="12" fill="#52514e">残りの 0.3〜0.9 倍分は 2 のメモリ系。</text>
-    <!-- 2 -->
-    <rect x="900" y="316" width="660" height="150" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
-    <circle cx="924" cy="342" r="12" fill="#0b0b0b"/><text x="924" y="347" font-size="13" font-weight="700" fill="#fcfcfb" text-anchor="middle">2</text>
-    <text x="946" y="347" font-weight="700" font-size="16">メモリ系（PSRAM・キャッシュ・内部 SRAM）</text>
-    <text x="946" y="374" fill="#52514e">P4: HEX PSRAM 200 MHz、L1 + L2 キャッシュ 256 KB、内部 SRAM 768 KB。</text>
-    <text x="946" y="396" fill="#52514e">S3: Quad PSRAM 80 MHz、D-cache 64 KB、内部 SRAM 340 KB。帯域で約 10 倍の差。</text>
-    <text x="946" y="418" fill="#52514e">活性 88 KB と VAE の作業領域 256 KB は両方 PSRAM。S3 は内部へ移す余地が無い。</text>
-    <text x="946" y="446" font-size="12" fill="#52514e">最も素直に出るのが重みステージング（memcpy 18 MB）: 0.15 s vs 0.75 s = 5 倍。</text>
-    <!-- 3 -->
-    <rect x="900" y="482" width="660" height="150" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
-    <circle cx="924" cy="508" r="12" fill="#0b0b0b"/><text x="924" y="513" font-size="13" font-weight="700" fill="#fcfcfb" text-anchor="middle">3</text>
-    <text x="946" y="513" font-weight="700" font-size="16">S3 の QACC はレーン 20 bit → 疎な経路を密に置き換え、計算量が 2 倍</text>
-    <text x="946" y="540" fill="#52514e">P4 の QACC は 16 レーン × 32 bit。疎な fc2 / VAE を gather のまま厳密に SIMD 化できた。</text>
-    <text x="946" y="562" fill="#52514e">S3 は ±2^19 で飽和し int32 の厳密な和が取れない → 転置重みで密な内積に。</text>
-    <text x="946" y="584" fill="#52514e">VAE 217M → 434M MAC、fc2 33k → 65k MAC/token。VAE の 4.7 倍のうち約 2 倍がこれ。</text>
-    <text x="946" y="612" font-size="12" fill="#52514e">加えて P4 は列方向 QACC（vsmulas のレーン選択）で 16 出力同時、S3 は accx の内積のみ。</text>
-    <!-- 4 -->
-    <rect x="900" y="648" width="660" height="128" rx="8" fill="#ffffff" stroke="#e6e6e3"/>
-    <circle cx="924" cy="674" r="12" fill="#0b0b0b"/><text x="924" y="679" font-size="13" font-weight="700" fill="#fcfcfb" text-anchor="middle">4</text>
-    <text x="946" y="679" font-weight="700" font-size="16">S3 の内積カーネルはハザード回避で命令が 1.5 倍</text>
-    <text x="946" y="706" fill="#52514e">融合命令（MAC + 次のロード）は 2 コア時、相手コアの負荷で古い値を掛けることがあった。</text>
-    <text x="946" y="728" fill="#52514e">ロードを 2 チャンク先行させる形にして 16 MAC あたり 2 → 3 命令（6.1 → 6.9 s）。</text>
-    <text x="946" y="756" font-size="12" fill="#52514e">P4 は融合命令と q レジスタ 4 組のローテーションがそのまま使える。</text>
-  </g>
-
-  <!-- 下: 余地と制約 -->
-  <g font-size="14">
-    <rect x="900" y="792" width="322" height="188" rx="8" fill="#eef4fb" stroke="#e6e6e3"/>
-    <text x="916" y="818" font-weight="700" font-size="15" fill="#0b0b0b">S3 で縮められる余地</text>
-    <text x="916" y="846" fill="#0b0b0b">・32 個以下の非ゼロごとに区切り</text>
-    <text x="916" y="866" fill="#0b0b0b">　RUR.QACC で読み出す疎な gather</text>
-    <text x="916" y="886" fill="#52514e">　→ 計算量が半分に（6.9 → 5 秒台）</text>
-    <text x="916" y="914" fill="#0b0b0b">・GDMA（esp_async_memcpy）で</text>
-    <text x="916" y="934" fill="#0b0b0b">　ステージングを計算と重ねる</text>
-    <text x="916" y="954" fill="#52514e">　→ 0.75 s の大半が消える</text>
-    <rect x="1238" y="792" width="322" height="188" rx="8" fill="#f3f3f1" stroke="#e6e6e3"/>
-    <text x="1254" y="818" font-weight="700" font-size="15" fill="#0b0b0b">縮まらない制約</text>
-    <text x="1254" y="846" fill="#0b0b0b">・クロック 240 MHz と PIE の発行速度</text>
-    <text x="1254" y="874" fill="#0b0b0b">・内部 SRAM 340 KB</text>
-    <text x="1254" y="894" fill="#52514e">　活性を PSRAM に置かざるを得ない</text>
-    <text x="1254" y="922" fill="#0b0b0b">・Quad PSRAM 80 MHz と 64 KB の D-cache</text>
-    <text x="1254" y="954" font-size="12" fill="#52514e">→ DiT の 2 倍と、活性まわりの下駄は残る</text>
-  </g>
-
-  <!-- 脚注 -->
-  <text x="40" y="934" font-size="12" fill="#52514e">出典: pico-faces-tab5 / pico-faces-M5CoreS3 の docs/details.md（2026-09-07 実測）。</text>
-  <text x="40" y="954" font-size="12" fill="#52514e">どちらの板でも PIE なし / あり で画像は bit 一致（CRC32 が同じ）。</text>
-  <text x="40" y="974" font-size="12" fill="#52514e">PIE なし（参照 C）は Tab5 10.1 s、CoreS3 27.9 s = 2.8 倍。PIE ありで 3.4 倍に広がる分が 3 と 4。</text>
+  <text x="60" y="808" font-size="12" fill="#52514e">出典: nnn112358/pico-faces-tab5、nnn112358/pico-faces-M5CoreS3（2026-09-07 の実測。どちらも PIE なし / あり で画像は bit 一致）。縮められる余地は 3（20 bit で区切った疎な gather）と 2 の転送（GDMA）。</text>
 </svg>
