@@ -1,6 +1,6 @@
 """Tab5 の USB シリアルにコマンドを送り、応答を集める（DTR/RTS を動かさない）。
 
-    uv run --no-project --with pyserial python tools/serial_cmd.py [--port /dev/ttyACM0]
+    uv run --no-project --with pyserial python tools/serial_cmd.py [--port /dev/ttyACM0 | auto]
         [--boot 25] [--wait 12] "G 1 4" "G 2 4" ...
 
 ⚠️ `cat /dev/ttyACM0` や `printf > /dev/ttyACM0` のようにポートを開閉すると、Linux の
@@ -18,12 +18,22 @@ import time
 import serial
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--port", default="/dev/ttyACM0")
+ap.add_argument("--port", default="auto", help="既定 auto: Espressif の USB Serial/JTAG（303a:1001）を探す")
 ap.add_argument("--boot", type=float, default=0)
 ap.add_argument("--wait", type=float, default=12)
 ap.add_argument("--reset", action="store_true", help="DTR/RTS でリセットしてから始める")
 ap.add_argument("cmds", nargs="*")
 a = ap.parse_args()
+
+if a.port == "auto":
+    import serial.tools.list_ports
+    cands = [p.device for p in serial.tools.list_ports.comports() if (p.vid, p.pid) == (0x303A, 0x1001)]
+    if not cands:
+        cands = [p.device for p in serial.tools.list_ports.comports() if p.device.startswith("/dev/ttyACM")]
+    if not cands:
+        sys.exit("serial_cmd.py: no Espressif USB Serial/JTAG device found")
+    a.port = sorted(cands)[0]
+    sys.stderr.write(f"serial_cmd.py: using {a.port}\n")
 
 ser = serial.Serial()
 ser.port = a.port

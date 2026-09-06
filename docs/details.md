@@ -115,7 +115,17 @@ PIE 命令のオペランドは x8–x15 / x24–x31 しか取れないので `r
 | `G 3 8 3 6` | `ecb7bc36` |
 | `G 3 8 4 6` | `fd41f027` |
 
-先頭 3 つは上流の golden そのものです（`k_steps=4`、class = seed % 5、w_idx = seed % 4 − 1）。ホストでも再現できます。
+先頭 3 つは上流の golden そのものです（`k_steps=4`、class = seed % 5、w_idx = seed % 4 − 1）。
+`m3_long_cfg` の golden は 4 枚で、こちらも PIE 版で一致を確認しました。
+
+| コマンド（`-DPF_MODEL=m3_long_cfg`） | crc32 |
+|---|---|
+| `G 1 4` | `b32e6e63` |
+| `G 2 4` | `467c51cb` |
+| `G 3 4` | `670b0e63` |
+| `G 4 4` | `58840461` |
+
+golden の CRC32 はホストで `zlib.crc32(open("golden_1.rgb","rb").read())` としても出ます。ホストでの生成の再現:
 
 ```bash
 gcc -O2 -Iupstream/checkpoints/m3_decD_deep_full -Iupstream/engine/include \
@@ -138,6 +148,23 @@ CPU クロックは 360 MHz です（P4 v1.0 の上限。`sdkconfig` の 400 MHz
 | `esp.movx.r.xacc.l` | 下位 **24 bit** しか返さない。`.h` と結合して 32 bit を組み立てる |
 | QACC のレーン順（s8 MAC） | `st.qacc.l.l / l.h / h.l / h.h` の順に書き出すと int32[16] の恒等 |
 | PSRAM 上の重み | L1 ミス時に L2 のレイテンシで PIE のロードが止まり、1 行 19 ns。内部 SRAM に置くと 2〜3 倍速い |
+
+### モデル × PIE の有無（README の表の測り方）
+
+4 つのビルドを順に書き込み、同じコマンドで測りました。
+
+```bash
+./idf.sh build                                              # 既定モデル、PIE 版
+./idf.sh -B build_ref_deep -DPF_PIE=0 build                 # 既定モデル、参照 C
+./idf.sh -B build_long -DPF_MODEL=m3_long_cfg build         # 高速モデル、PIE 版
+./idf.sh -B build_ref_long -DPF_MODEL=m3_long_cfg -DPF_PIE=0 build
+./idf.sh -B <dir> -p /dev/ttyACM0 flash
+uv run --no-project --with pyserial python tools/serial_cmd.py --boot 30 --wait 40 \
+    "G 4 4" "G 1 4" "G 3 8 4 6" "G 3 8 3 6"    # K=4 none / K=4 w=4 / K=8 none / K=8 w=6
+```
+
+`G 4 4` は seed 4 → class 4（無条件）・w=0 で cfg none、`G 3 8 4 6` は class 4 なので w=6 を指定しても guidance は
+効かず cfg none 相当、`G 3 8 3 6` が cfg w=6 です。
 
 ### 高速化の経過（K=4 w=4）
 

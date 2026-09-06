@@ -66,16 +66,31 @@ uv run --no-project --with pyserial python tools/serial_cmd.py --boot 14 --wait 
 
 ## 推論速度
 
-Tab5（ESP32-P4 360 MHz × 2 コア）での 1 枚の生成時間です。PIE 版も参照実装と bit 一致します。
+Tab5（ESP32-P4 360 MHz × 2 コア）で 1 枚を生成する時間です。2 つのモデルそれぞれを、PIE なし（参照 C、
+`-DPF_PIE=0`）と PIE 版で測りました。どの組み合わせでも生成される画像は同じです（CRC32 が一致）。
 
-| 設定 | 参照 C（移植直後） | PIE 版（現在） |
-|---|---:|---:|
-| K=4、CFG w=4 | 10.10 s | **2.02 s** |
-| K=8、CFG なし | 10.08 s | **2.03 s** |
-| K=8、CFG w=6 | 18.36 s | **3.53 s** |
+### m3_decD_deep_full（既定。DiT 深さ 12、blob 4.02 MB）
 
-上流の RP2350 @300 MHz は K=4 w=4 で約 10 秒です。
-`-DPF_PIE=0` を付けてビルドすると参照実装に戻ります。
+| 設定 | PIE なし | PIE 版 | 倍率 |
+|---|---:|---:|---:|
+| K=4、cfg none | 5.99 s | **1.27 s** | 4.7× |
+| K=4、cfg w=4（golden の規約） | 10.11 s | **2.02 s** | 5.0× |
+| K=8、cfg none（起動時の既定） | 10.09 s | **2.03 s** | 5.0× |
+| K=8、cfg w=6 | 18.30 s | **3.52 s** | 5.2× |
+
+### m3_long_cfg（`-DPF_MODEL=m3_long_cfg`。DiT 深さ 8、blob 2.57 MB）
+
+| 設定 | PIE なし | PIE 版 | 倍率 |
+|---|---:|---:|---:|
+| K=4、cfg none | 3.39 s | **0.75 s** | 4.5× |
+| K=4、cfg w=4（golden の規約） | 6.14 s | **1.27 s** | 4.8× |
+| K=8、cfg none | 6.17 s | **1.29 s** | 4.8× |
+| K=8、cfg w=6 | 11.70 s | **2.35 s** | 5.0× |
+
+- K はステップ数（Euler）。cfg none は 1 ステップに DiT を 1 回、cfg w=… は 2 回通します。
+- 時間はシリアルの `G` コマンドが返す `ms=`（生成の開始から CRC 計算まで。表示は含みません）です。
+- 上流の RP2350 @300 MHz は m3_decD_deep_full の K=4 w=4 で約 10 秒です。
+- 測定のしかたは [docs/details.md](docs/details.md) にあります。
 
 ## 詳しい内容
 
