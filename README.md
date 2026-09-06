@@ -32,8 +32,9 @@ git submodule update --init         # 上流を取る（約 300 MB。モデル�
 
 ### 操作
 
-起動すると seed 3 で 1 枚生成して表示します（8 ステップ、male / smile、CFG w=6）。
-右パネルのボタンで seed と条件を選んで生成します。
+起動すると seed 3 で 1 枚生成して表示します（8 ステップ、male / smile、cfg none）。
+右パネルのボタンで seed と条件を選んで生成します。既定の cfg none は約 2 秒で 1 枚、
+cfg を w=4 / 6 / 8 にすると guidance が効く代わりに約 3.5 秒かかります。
 
 | ボタン | 動作 |
 |---|---|

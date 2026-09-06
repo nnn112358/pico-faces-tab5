@@ -14,8 +14,8 @@
  *   M5Unified の wasClicked() は「押した位置から 8 px も動かず 500 ms 以内に離した」ときしか真に
  *   ならず、指で普通にタップすると外れる（実機で 40 秒タップして 0 回だった）。
  *   wasReleased()（離した瞬間）と base_x/base_y（押し始めの座標）で判定する。
- *   生成中はタッチを読まないので、生成中のタップは終わった直後に「離した」として見える。
- *   1 枚生成の後は 1 回ぶん読み捨て、10 枚連続の途中では「中断」として扱う。
+ *   生成中も rf_par_for 経由（pf_ui_poll、40 ms 間隔）で読み、触れていれば印を立てる。
+ *   1 枚生成ではその印を捨て、10 枚連続では次の画像に進まず「中断」にする。
  *
  * USB シリアル（115200 / USB Serial-JTAG）:
  *   G <seed> [k_steps] [class] [w] [count]   生成。class/w を省略すると上流の golden 規約
@@ -107,6 +107,8 @@ static bool s_busy;
 
 /* 起動直後にタッチパネルが離しイベントを報告することがある。起動から 3 秒間は無視する */
 static int64_t s_touch_ok_us;
+/* 生成中に画面が触られたか（pf_ui_poll が立て、連続生成の中断に使う） */
+static volatile bool s_touched_while_busy;
 
 static int w_value(int w_idx) {
     if (w_idx < 0 || w_idx >= (int)s_model->n_w) return 0;
@@ -294,6 +296,27 @@ static int poll_touch(void) {
     return -1;
 }
 
+/* 生成中のタッチ監視。pf_par.c の rf_par_for から呼ばれる（生成タスク上、40 ms に 1 回に間引く）。
+ * M5Unified は「押し始めを見ていない離し」を報告しないので、画像と画像の間で 1 回読むだけでは
+ * 生成中に完結したタップが見えない。生成の内側で読んで、触れていたら印を立てる */
+extern "C" void pf_ui_poll(void) {
+    static int64_t last_us;
+    if (!s_busy) return;
+    int64_t now = esp_timer_get_time();
+    if (now - last_us < 40000) return;
+    last_us = now;
+    M5.update();
+    if (now < s_touch_ok_us) return;
+    int n = M5.Touch.getCount();
+    for (int i = 0; i < n; i++) {
+        auto t = M5.Touch.getDetail(i);
+        if (t.isPressed() || t.wasReleased()) {
+            if (!s_touched_while_busy) ESP_LOGI(TAG, "touch during generation at %d,%d", (int)t.x, (int)t.y);
+            s_touched_while_busy = true;
+        }
+    }
+}
+
 /* 生成中に溜まったタッチを読み捨てる（生成が終わった直後に 1 回） */
 static void drain_touch(void) {
     for (int i = 0; i < 3; i++) {
@@ -389,16 +412,18 @@ static void gen_task(void *arg) {
             s_batch_i = i + 1;
             pf_req_t r = req;
             r.seed = req.seed + (uint64_t)i;
+            s_touched_while_busy = false;
             generate_one(r);
             if (i + 1 < n) {
-                /* 生成中に画面を触っていたら中断 */
+                /* 生成中に画面を触っていたら（pf_ui_poll が見ている）ここで止める */
                 int b = poll_touch();
-                if (b >= 0) {
+                if (s_touched_while_busy || b >= 0) {
                     cancelled = true;
                     break;
                 }
             }
         }
+        s_touched_while_busy = false;
         drain_touch();
         char buf[80];
         if (cancelled) snprintf(buf, sizeof buf, "中断しました（%d / %d 枚）", s_batch_i, n);
@@ -518,12 +543,12 @@ extern "C" void app_main(void) {
 #endif
     pf_par_init();
 
-    /* パネルの初期値: seed 3、K ステップ、class 3（male / smile）、w=6。最初の 1 枚をすぐ生成する */
+    /* パネルの初期値: seed 3、K ステップ、class 3（male / smile）、cfg none。最初の 1 枚をすぐ生成する。
+     * cfg none は 1 ステップにつき DiT を 1 回しか通さないので、w=6 の約半分の時間で済む
+     * （K=8 で約 2.0 秒。w=6 だと約 3.5 秒）。cfg ボタンで none → 4 → 6 → 8 と切り替えられる */
     s_k = (int)s_model->K; /* 8 */
     s_cond = 3;
-    s_w_idx = -1;
-    for (uint32_t j = 0; j < s_model->n_w; j++)
-        if (s_model->w_q8[j] == 6 * 256) s_w_idx = (int)j;
+    s_w_idx = -1;          /* cfg none（高速） */
     s_seed = 3;
     s_cur.seed = s_seed;
     s_cur.k_steps = s_k;

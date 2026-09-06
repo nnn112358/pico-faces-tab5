@@ -73,7 +73,10 @@ static void prof_add(par_fn fn, int64_t us) {
     }
 }
 
+void pf_ui_poll(void); /* main.cpp: 生成中のタッチ監視（内部で 40 ms に間引く） */
+
 void rf_par_for(int n, void (*fn)(int, int, void *), void *ctx) {
+    pf_ui_poll();
     int64_t t0 = esp_timer_get_time();
     int mid = n / 2;
     if (mid == 0 || s_worker == NULL) {
