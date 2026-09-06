@@ -77,6 +77,8 @@ uv run --no-project --with pyserial python tools/serial_cmd.py --boot 14 --wait 
 Tab5（ESP32-P4 360 MHz × 2 コア）で 1 枚を生成する時間です。2 つのモデルそれぞれを、PIE なし（参照 C、
 `-DPF_PIE=0`）と PIE 版で測りました。どの組み合わせでも生成される画像は同じです（CRC32 が一致）。
 
+![1 枚あたりの生成時間: Tab5 と CoreS3、PIE なし / あり（既定モデル）](docs/media/speed.png)
+
 ### m3_decD_deep_full（既定。DiT 深さ 12、blob 4.02 MB）
 
 | 設定 | PIE なし | PIE 版 | 倍率 |
@@ -98,7 +100,8 @@ Tab5（ESP32-P4 360 MHz × 2 コア）で 1 枚を生成する時間です。2 �
 - K はステップ数（Euler）。cfg none は 1 ステップに DiT を 1 回、cfg w=… は 2 回通します。
 - 時間はシリアルの `G` コマンドが返す `ms=`（生成の開始から CRC 計算まで。表示は含みません）です。
 - 上流の RP2350 @300 MHz は m3_decD_deep_full の K=4 w=4 で約 10 秒です。
-- 測定のしかたは [docs/details.md](docs/details.md) にあります。
+- 測定のしかたは [docs/details.md](docs/details.md) にあります。グラフは `tools/speed_chart.py` で作れます
+  （CoreS3 の値は [pico-faces-M5CoreS3](https://github.com/nnn112358/pico-faces-M5CoreS3) の実測）。
 
 ## 詳しい内容
 
